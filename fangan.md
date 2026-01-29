@@ -1,0 +1,2413 @@
+
+#  v1.3 八字排盘系统方案
+**基于旺衰法为主，格局法为辅 | 算法+LLM混合架构**
+
+---
+
+## 设计理念
+
+### 核心定位
+- **目标用户：** 普通大众（不懂命理术语）
+- **输出风格：** 白话表达，避免专业术语
+- **技术架构：** 确定性计算用算法，综合判断用LLM
+- **理论体系：** 旺衰法为主（适用所有人），格局法为辅（10%能入格者）
+- **理论依据：** 以《渊海子平》《三命通会》《穷通宝鉴》为核心经典
+
+### 命理逻辑
+```
+五行旺衰（基础） → 日主强弱（核心） → 取用神（关键） → 格局识别（辅助） → 大运流年（预测）
+```
+
+---
+
+## 第一阶段：数据预处理与四柱排盘
+
+### 模块1.1：输入信息采集
+
+**必填项：**
+```json
+{
+  "birth_date": "1984-11-07",
+  "birth_time": "22:30",
+  "gender": "男",
+  "location": {
+    "province": "北京",
+    "city": "北京",
+    "longitude": 116.4,
+    "latitude": 39.9
+  }
+}
+```
+
+---
+
+### 模块1.2：真太阳时校正 ✅ 算法实现
+
+**为什么需要真太阳时？**
+古代用日晷看时间，没有统一时区概念。现代用北京时间（东经120°标准时），但中国东西跨度大，实际太阳时间差异可达4小时。
+
+**计算公式：**
+```
+真太阳时 = 北京时间 + 经度时差 + 均时差
+
+其中：
+- 经度时差 = (当地经度 - 120°) × 4分钟
+  东经>120°为正，<120°为负
+  
+- 均时差(Equation of Time)：
+  地球公转轨道是椭圆，真太阳与平太阳每天有±16分钟差异
+  需查天文历表或用公式计算
+```
+
+**实现示例：**
+```python
+def calculate_true_solar_time(beijing_time, longitude):
+    """
+    计算真太阳时
+    
+    Args:
+        beijing_time: datetime对象，北京时间
+        longitude: float，出生地经度
+    
+    Returns:
+        datetime对象，真太阳时
+    """
+    # 经度时差
+    longitude_offset = (longitude - 120) * 4  # 分钟
+    
+    # 均时差（需要用天文算法计算）
+    equation_of_time = calculate_equation_of_time(beijing_time)
+    
+    # 合成
+    true_solar_time = beijing_time + timedelta(
+        minutes=longitude_offset + equation_of_time
+    )
+    
+    return true_solar_time
+```
+
+---
+
+### 模块1.3：夏令时处理 ✅ 算法实现
+
+**历史背景：**
+中国在1986-1991年实行过夏令时，这期间出生的人需要减去1小时。
+
+**规则表：**
+```python
+DAYLIGHT_SAVING_PERIODS = [
+    ("1986-05-04", "1986-09-14"),
+    ("1987-04-12", "1987-09-13"),
+    ("1988-04-10", "1988-09-11"),
+    ("1989-04-16", "1989-09-17"),
+    ("1990-04-15", "1990-09-16"),
+    ("1991-04-14", "1991-09-15"),
+]
+
+def adjust_daylight_saving(beijing_time):
+    """检查并调整夏令时"""
+    for start, end in DAYLIGHT_SAVING_PERIODS:
+        if start <= beijing_time.date().isoformat() <= end:
+            return beijing_time - timedelta(hours=1)
+    return beijing_time
+```
+
+---
+
+### 模块1.4：子时归属处理 ✅ 算法实现
+
+**采用主流算法（《子平真诠》派）：**
+23:00-24:00算次日子时
+
+
+**实现逻辑：**
+```python
+def handle_zi_time(true_solar_time):
+    """
+    子时归属处理
+    
+    采用主流算法：23:00后算次日
+    """
+    hour = true_solar_time.hour
+    
+    if 23 <= hour < 24:
+        adjusted_time = true_solar_time + timedelta(days=1)
+        return {
+            "datetime": adjusted_time,
+            "note": "⚠️ 子时归属说明：本系统采用主流算法，23:00后算作次日。如对时辰有疑问，建议通过重大事件验证。"
+        }
+    return {"datetime": true_solar_time, "note": None}
+```
+
+---
+
+### 模块1.5：节气精确计算 ✅ 算法实现
+
+**节气的作用：**
+- **年柱分界：** 以立春为界（不是公历1月1日，也不是农历正月初一）
+- **月柱分界：** 以十二节为界（立春、惊蛰、清明...）
+
+**24节气与月份对照：**
+```
+┌─────────┬──────┬──────────┐
+│ 节（立月）│ 地支  │ 气（不用） │
+├─────────┼──────┼──────────┤
+│ 立春     │ 寅月  │ 雨水      │
+│ 惊蛰     │ 卯月  │ 春分      │
+│ 清明     │ 辰月  │ 谷雨      │
+│ 立夏     │ 巳月  │ 小满      │
+│ 芒种     │ 午月  │ 夏至      │
+│ 小暑     │ 未月  │ 大暑      │
+│ 立秋     │ 申月  │ 处暑      │
+│ 白露     │ 酉月  │ 秋分      │
+│ 寒露     │ 戌月  │ 霜降      │
+│ 立冬     │ 亥月  │ 小雪      │
+│ 大雪     │ 子月  │ 冬至      │
+│ 小寒     │ 丑月  │ 大寒      │
+└─────────┴──────┴──────────┘
+
+重要：只有"节"用于划分月份，"气"不用！
+```
+
+**实现方式：**
+使用寿星天文历算法或查询天文数据库，精确计算节气时刻（精确到分钟）。
+
+---
+
+### 模块1.6：四柱排盘 ✅ 算法实现
+
+#### 年柱推算
+
+**规则：** 以立春为分界
+
+```python
+def get_year_pillar(true_solar_time, lichun_time):
+    """
+    获取年柱
+    
+    Args:
+        true_solar_time: 真太阳时
+        lichun_time: 当年立春时刻
+    """
+    birth_year = true_solar_time.year
+    
+    if true_solar_time < lichun_time:
+        # 出生在立春之前，用上一年
+        return get_ganzhi(birth_year - 1)
+    else:
+        # 出生在立春之后，用当年
+        return get_ganzhi(birth_year)
+```
+
+#### 月柱推算
+
+**规则：** 以十二节为分界 + 五虎遁月法
+
+```python
+def wuhu_dun(year_gan, month_zhi):
+    """
+    五虎遁月法
+    
+    口诀：
+    甲己之年丙作首，乙庚之岁戊为头
+    丙辛必定寻庚起，丁壬壬位顺行流
+    若问戊癸何方发，甲寅之上好追求
+    """
+    start_gan_map = {
+        '甲': '丙', '己': '丙',
+        '乙': '戊', '庚': '戊',
+        '丙': '庚', '辛': '庚',
+        '丁': '壬', '壬': '壬',
+        '戊': '甲', '癸': '甲'
+    }
+    
+    # 从寅月开始顺推
+    return calculate_month_gan(start_gan_map[year_gan], month_zhi)
+```
+
+#### 日柱推算
+
+**方法：** 查万年历或使用蔡勒公式计算
+
+#### 时柱推算
+
+**规则：** 五鼠遁时法
+
+```python
+def wushu_dun(day_gan, hour_zhi):
+    """
+    五鼠遁时法
+    
+    口诀：
+    甲己还加甲，乙庚丙作初
+    丙辛从戊起，丁壬庚子居
+    戊癸何方发，壬子是真途
+    """
+    start_gan_map = {
+        '甲': '甲', '己': '甲',
+        '乙': '丙', '庚': '丙',
+        '丙': '戊', '辛': '戊',
+        '丁': '庚', '壬': '庚',
+        '戊': '壬', '癸': '壬'
+    }
+    
+    return calculate_hour_gan(start_gan_map[day_gan], hour_zhi)
+```
+
+---
+
+### 模块1.7：地支藏干展开 ✅ 算法实现（修正版）
+
+**🔧 司令日期法**
+
+**标准藏干表（仅标注存在哪些藏干）：**
+```python
+HIDDEN_STEMS = {
+    "子": ["癸", "壬"],
+    "丑": ["己", "癸", "辛"],
+    "寅": ["甲", "丙", "戊"],
+    "卯": ["乙"],
+    "辰": ["戊", "乙", "癸"],
+    "巳": ["丙", "戊", "庚"],
+    "午": ["丁", "己"],
+    "未": ["己", "丁", "乙"],
+    "申": ["庚", "壬", "戊"],
+    "酉": ["辛"],
+    "戌": ["戊", "辛", "丁"],
+    "亥": ["壬", "甲"]
+}
+```
+
+**说明：**
+- 此表只用于标注"地支中藏有哪些天干"
+---
+
+### 模块1.8：透干检测 ✅ 算法实现
+```python
+def check_tougan(month_zhi, all_gans, day_gan):
+    """
+    检测月令藏干是否透出天干
+    
+    【命理原理】
+    格局法的核心判断依据：
+    - 月令藏干透出天干，则以透出之神定格局
+    - 多个藏干都透，取司令神
+    - 都不透，取本气（司令神）
+    
+    Args:
+        month_zhi: 月支
+        all_gans: 四柱天干列表 [年干, 月干, 日干, 时干]
+        day_gan: 日主（用于排除日干本身）
+    
+    Returns:
+        {
+            "month_zhi": "亥",
+            "hidden_stems": ["壬", "甲"],
+            "tougan_analysis": {
+                "壬": {
+                    "positions": [],
+                    "is_tougan": False,
+                    "shishen": "七杀"
+                },
+                "甲": {
+                    "positions": ["年干"],
+                    "is_tougan": True,
+                    "shishen": "偏印"
+                }
+            },
+            "pattern_hint": "月令甲木透于年干，可取偏印格"
+        }
+    """
+    hidden_stems = HIDDEN_STEMS[month_zhi]
+    tougan_analysis = {}
+    
+    pillar_names = ["年干", "月干", "日干", "时干"]
+    
+    for cang_gan in hidden_stems:
+        # 排除日干本身（不算透干）
+        if cang_gan == day_gan:
+            positions = []
+        else:
+            positions = [
+                pillar_names[i] 
+                for i, gan in enumerate(all_gans) 
+                if gan == cang_gan and i != 2  # 不包括日柱位置
+            ]
+        
+        tougan_analysis[cang_gan] = {
+            "positions": positions,
+            "is_tougan": len(positions) > 0,
+            "shishen": get_shishen(day_gan, cang_gan)
+        }
+    
+    # 生成格局提示
+    tougan_list = [
+        f"{stem}({info['shishen']})" 
+        for stem, info in tougan_analysis.items() 
+        if info["is_tougan"]
+    ]
+    
+    if tougan_list:
+        pattern_hint = f"月令{'、'.join(tougan_list)}透干，需结合司令神确定格局"
+    else:
+        pattern_hint = "月令藏干均未透出，按司令神定格局"
+    
+    return {
+        "month_zhi": month_zhi,
+        "hidden_stems": hidden_stems,
+        "tougan_analysis": tougan_analysis,
+        "pattern_hint": pattern_hint
+    }
+```
+
+
+---
+
+### 模块1.9：十神标注 ✅ 算法实现（后台用）
+
+**十神定义：** 日干与其他天干的五行生克关系
+
+**重要说明：** 
+- 十神在后台标注，供LLM推理使用
+- **不显示给用户**（初期隐藏专业术语）
+- 未来可以作为"专业模式"可选功能
+
+```python
+def mark_shishen(bazi_data):
+    """
+    标注十神（仅后台使用，不显示给用户）
+    
+    Returns:
+        {
+            "年干甲木": "正印",
+            "月干乙木": "偏印",
+            "时干己土": "伤官",
+            "亥藏壬水": "正官",
+            "亥藏甲木": "正印"
+        }
+    """
+    day_gan = bazi_data.day_gan
+    shishen_map = {}
+    
+    # 标注天干十神
+    for pillar_name, gan in [("年干", bazi_data.year_gan), 
+                             ("月干", bazi_data.month_gan),
+                             ("时干", bazi_data.hour_gan)]:
+        if gan != day_gan:
+            shishen_map[f"{pillar_name}{gan}"] = get_shishen(day_gan, gan)
+    
+    # 标注地支藏干十神
+    for zhi_name, zhi in [("年支", bazi_data.year_zhi),
+                          ("月支", bazi_data.month_zhi),
+                          ("日支", bazi_data.day_zhi),
+                          ("时支", bazi_data.hour_zhi)]:
+        for cang_gan in HIDDEN_STEMS[zhi]:
+            if cang_gan != day_gan:
+                shishen_map[f"{zhi_name}{zhi}藏{cang_gan}"] = get_shishen(day_gan, cang_gan)
+    
+    return shishen_map
+```
+
+---
+
+### 模块1.10：刑冲合害检测（扩充版）✅ 算法实现
+
+**🔧 重要扩充：增加三刑、六害检测**
+
+```python
+def detect_interactions(bazi_pillars):
+    """
+    检测刑冲合害（标注存在性和位置，不计算力度）
+    
+    检测内容：
+    1. 六冲
+    2. 六合
+    3. 三合
+    4. 三刑（新增）
+    5. 六害（新增）
+    
+    Returns:
+        [
+            {
+                "type": "六冲",
+                "zhi1": "子",
+                "zhi2": "午",
+                "position1": "年支",
+                "position2": "日支",
+                "involved_pillars": ["年柱", "日柱"],
+                "note": "年支与日支相冲"
+            },
+            ...
+        ]
+    """
+    interactions = []
+    
+    pillars = [
+        {"name": "年柱", "position": "年支", "zhi": bazi_pillars.year_zhi},
+        {"name": "月柱", "position": "月支", "zhi": bazi_pillars.month_zhi},
+        {"name": "日柱", "position": "日支", "zhi": bazi_pillars.day_zhi},
+        {"name": "时柱", "position": "时支", "zhi": bazi_pillars.hour_zhi},
+    ]
+    
+    # 六冲检测
+    LIUCHONG = {
+        '子': '午', '午': '子',
+        '丑': '未', '未': '丑',
+        '寅': '申', '申': '寅',
+        '卯': '酉', '酉': '卯',
+        '辰': '戌', '戌': '辰',
+        '巳': '亥', '亥': '巳'
+    }
+    
+    for i in range(len(pillars)):
+        for j in range(i+1, len(pillars)):
+            p1, p2 = pillars[i], pillars[j]
+            
+            if LIUCHONG.get(p1["zhi"]) == p2["zhi"]:
+                interactions.append({
+                    "type": "六冲",
+                    "zhi1": p1["zhi"],
+                    "zhi2": p2["zhi"],
+                    "position1": p1["position"],
+                    "position2": p2["position"],
+                    "involved_pillars": [p1["name"], p2["name"]],
+                    "note": f"{p1['position']}与{p2['position']}相冲"
+                })
+    
+    # 六合检测
+    LIUHE = {
+        ('子', '丑'): '土',
+        ('寅', '亥'): '木',
+        ('卯', '戌'): '火',
+        ('辰', '酉'): '金',
+        ('巳', '申'): '水',
+        ('午', '未'): '土'
+    }
+    
+    for i in range(len(pillars)):
+        for j in range(i+1, len(pillars)):
+            p1, p2 = pillars[i], pillars[j]
+            pair = tuple(sorted([p1["zhi"], p2["zhi"]]))
+            
+            if pair in LIUHE:
+                interactions.append({
+                    "type": "六合",
+                    "zhi1": p1["zhi"],
+                    "zhi2": p2["zhi"],
+                    "position1": p1["position"],
+                    "position2": p2["position"],
+                    "involved_pillars": [p1["name"], p2["name"]],
+                    "hehuan_element": LIUHE[pair],
+                    "note": f"{p1['position']}与{p2['position']}六合化{LIUHE[pair]}"
+                })
+    
+    # 三合检测
+    SANHE = {
+        ('申', '子', '辰'): '水',
+        ('亥', '卯', '未'): '木',
+        ('寅', '午', '戌'): '火',
+        ('巳', '酉', '丑'): '金'
+    }
+    
+    zhis = [p["zhi"] for p in pillars]
+    for combo, element in SANHE.items():
+        if all(z in zhis for z in combo):
+            involved = [p for p in pillars if p["zhi"] in combo]
+            interactions.append({
+                "type": "三合",
+                "zhis": list(combo),
+                "involved_pillars": [p["name"] for p in involved],
+                "hehuan_element": element,
+                "note": f"{''.join(combo)}三合{element}局"
+            })
+    
+    # 🆕 三刑检测
+    SANXING = {
+        ('寅', '巳', '申'): '无恩之刑',
+        ('丑', '未', '戌'): '恃势之刑'
+    }
+    
+    LIANG_XING = {
+        ('子', '卯'): '无礼之刑'
+    }
+    
+    ZI_XING = ['辰', '午', '酉', '亥']
+    
+    # 检测三刑
+    for combo, xing_type in SANXING.items():
+        if all(z in zhis for z in combo):
+            involved = [p for p in pillars if p["zhi"] in combo]
+            interactions.append({
+                "type": "三刑",
+                "zhis": list(combo),
+                "involved_pillars": [p["name"] for p in involved],
+                "xing_type": xing_type,
+                "note": f"{''.join(combo)}三刑（{xing_type}），多主不顺"
+            })
+    
+    # 检测子卯刑
+    for combo, xing_type in LIANG_XING.items():
+        if all(z in zhis for z in combo):
+            involved = [p for p in pillars if p["zhi"] in combo]
+            interactions.append({
+                "type": "二刑",
+                "zhis": list(combo),
+                "involved_pillars": [p["name"] for p in involved],
+                "xing_type": xing_type,
+                "note": f"{''.join(combo)}相刑（{xing_type}）"
+            })
+    
+    # 检测自刑
+    for zhi in ZI_XING:
+        count = zhis.count(zhi)
+        if count >= 2:
+            involved = [p for p in pillars if p["zhi"] == zhi]
+            interactions.append({
+                "type": "自刑",
+                "zhi": zhi,
+                "count": count,
+                "involved_pillars": [p["name"] for p in involved],
+                "note": f"{zhi}出现{count}次，自刑，主内心矛盾"
+            })
+    
+    # 🆕 六害检测
+    LIUHAI = {
+        ('子', '未'): '子未害',
+        ('丑', '午'): '丑午害',
+        ('寅', '巳'): '寅巳害',
+        ('卯', '辰'): '卯辰害',
+        ('申', '亥'): '申亥害',
+        ('酉', '戌'): '酉戌害'
+    }
+    
+    for i in range(len(pillars)):
+        for j in range(i+1, len(pillars)):
+            p1, p2 = pillars[i], pillars[j]
+            pair = tuple(sorted([p1["zhi"], p2["zhi"]]))
+            
+            if pair in LIUHAI:
+                interactions.append({
+                    "type": "六害",
+                    "zhi1": p1["zhi"],
+                    "zhi2": p2["zhi"],
+                    "position1": p1["position"],
+                    "position2": p2["position"],
+                    "involved_pillars": [p1["name"], p2["name"]],
+                    "hai_type": LIUHAI[pair],
+                    "note": f"{LIUHAI[pair]}，主暗中阻碍"
+                })
+    
+    return interactions
+```
+
+---
+
+### 模块1.11：查表数据准备 ✅ 算法实现
+
+```python
+def prepare_reference_tables(bazi_data):
+    """
+    查表并准备参考数据（避免LLM幻觉）
+    
+    Returns:
+        {
+            "旺相休囚死": {
+                "season": "冬季（亥月）",
+                "table": {
+                    "水": "旺",
+                    "木": "相",
+                    "金": "休",
+                    "火": "囚",
+                    "土": "死"
+                }
+            },
+            "十二长生": {
+                "丙火": {
+                    "午": "帝旺",
+                    "亥": "绝",
+                    "子": "胎",
+                    ...
+                }
+            },
+            "调候速查": {
+                "丙火亥月": "甲木为先，忌壬癸水"
+            }
+        }
+    """
+    # 旺相休囚死表
+    WANGXIANG_TABLE = {
+        "春季": {"木": "旺", "火": "相", "水": "休", "金": "囚", "土": "死"},
+        "夏季": {"火": "旺", "土": "相", "木": "休", "水": "囚", "金": "死"},
+        "秋季": {"金": "旺", "水": "相", "土": "休", "火": "囚", "木": "死"},
+        "冬季": {"水": "旺", "木": "相", "金": "休", "火": "囚", "土": "死"}
+    }
+    
+    # 十二长生表
+    CHANGSHENG_TABLE = {
+        "甲木": {"亥": "长生", "子": "沐浴", "丑": "冠带", "寅": "临官", "卯": "帝旺", ...},
+        "丙火": {"寅": "长生", "卯": "沐浴", "辰": "冠带", "巳": "临官", "午": "帝旺", ...},
+        # ... 其他天干
+    }
+    
+    # 调候速查表（依《穷通宝鉴》）
+    TIAOHOU_TABLE = {
+        "丙火亥月": "甲木为先，忌壬癸水",
+        "丙火子月": "壬水为尊，戊土为佐",
+        # ... 其他组合
+    }
+    
+    season = get_season(bazi_data.month_zhi)
+    day_gan = bazi_data.day_gan
+    
+    return {
+        "旺相休囚死": {
+            "season": f"{season}（{bazi_data.month_zhi}月）",
+            "table": WANGXIANG_TABLE[season]
+        },
+        "十二长生": {
+            day_gan: CHANGSHENG_TABLE[day_gan]
+        },
+        "调候速查": {
+            f"{day_gan}{bazi_data.month_zhi}月": TIAOHOU_TABLE.get(f"{day_gan}{bazi_data.month_zhi}月", "无特殊要求")
+        }
+    }
+```
+
+---
+
+### 模块1.12：五行统计 ✅ 算法实现
+
+```python
+def count_wuxing(bazi_data):
+    """
+    统计五行分布
+    
+    【用途说明】
+    1. UI展示：让用户直观看到五行分布
+    2. 辅助LLM：提供宏观信息，帮助判断五行失衡程度
+    
+    【重要警告】
+    ⚠️ 此统计不能直接用于旺衰判断！
+    旺衰必须看得令、得地、得势，不能只看数量。
+    一个得令的金可以胜过三个失令的木。
+    
+    Returns:
+        {
+            "木": {
+                "数量": 4.6, 
+                "占比": "30%", 
+                "来源": ["甲（年干）", "乙（月干）", "亥藏甲×2"]
+            },
+            "火": {
+                "数量": 1.7, 
+                "占比": "11%", 
+                "来源": ["丙（日干）", "午藏丁"]
+            },
+            ...
+        }
+    """
+    wuxing_detail = {
+        "木": {"数量": 0, "来源": []},
+        "火": {"数量": 0, "来源": []},
+        "土": {"数量": 0, "来源": []},
+        "金": {"数量": 0, "来源": []},
+        "水": {"数量": 0, "来源": []}
+    }
+    
+    # 统计天干
+    pillar_names = ["年干", "月干", "日干", "时干"]
+    for i, gan in enumerate(bazi_data.all_gans):
+        element = gan_to_element(gan)
+        wuxing_detail[element]["数量"] += 1
+        wuxing_detail[element]["来源"].append(f"{gan}（{pillar_names[i]}）")
+    
+    # 统计地支藏干（简化统计：每个藏干算0.5个）
+    pillar_names_zhi = ["年支", "月支", "日支", "时支"]
+    for i, zhi in enumerate(bazi_data.all_zhis):
+        for cang_gan in HIDDEN_STEMS[zhi]:
+            element = gan_to_element(cang_gan)
+            wuxing_detail[element]["数量"] += 0.5
+            wuxing_detail[element]["来源"].append(f"{zhi}藏{cang_gan}")
+    
+    # 计算占比
+    total = sum(item["数量"] for item in wuxing_detail.values())
+    for element in wuxing_detail:
+        ratio = wuxing_detail[element]["数量"] / total if total > 0 else 0
+        wuxing_detail[element]["占比"] = f"{int(ratio * 100)}%"
+        wuxing_detail[element]["数量"] = round(wuxing_detail[element]["数量"], 1)
+    
+    return wuxing_detail
+```
+
+---
+
+### 模块1.13：格局预警标记 ✅ 算法实现
+
+```python
+def check_special_pattern_flags(bazi_data):
+    """
+    标记异常特征（提醒LLM注意，但不替LLM判断）
+    
+    Returns:
+        {
+            # 🆕 新增：根气详细分析
+            "root_analysis": {
+                "has_root": True,
+                "roots": [
+                    {
+                        "zhi": "午",
+                        "source": "本气",
+                        "changsheng_status": "帝旺",
+                        "note": "午火为日主本气根，查十二长生为帝旺"
+                    }
+                ]
+            },
+            
+            # ✅ 保留原有功能
+            "日主无根": False,
+            "五行缺失": ["金"],
+            "五行占比异常": {
+                "element": "水",
+                "ratio": 0.46,
+                "note": "水占46%，显著偏多"
+            },
+            "全阴全阳": None,
+            "提示": "该八字水旺木多，五行分布不均，请注意判断是否为特殊格局"
+        }
+    """
+    flags = {}
+    
+    # ========================================
+    # 🆕 Part 1: 根气详细分析（新增）
+    # ========================================
+    day_gan = bazi_data.day_gan
+    changsheng_table = get_changsheng_table(day_gan)
+    
+    roots = []
+    for zhi in bazi_data.all_zhis:
+        changsheng_status = changsheng_table[zhi]
+        
+        # 判断是否为有效根
+        if changsheng_status in ["帝旺", "临官", "长生", "冠带"]:
+            # 判断根的来源（本气/中气/余气）
+            hidden_stems = HIDDEN_STEMS[zhi]
+            day_gan_element = gan_to_element(day_gan)
+            
+            # 找到日主五行在该地支中的位置
+            source = "未知"
+            for i, stem in enumerate(hidden_stems):
+                if gan_to_element(stem) == day_gan_element:
+                    if i == 0:
+                        source = "本气"
+                    elif len(hidden_stems) == 2:
+                        source = "中气"
+                    elif i == 1:
+                        source = "中气"
+                    else:
+                        source = "余气"
+                    break
+            
+            roots.append({
+                "zhi": zhi,
+                "source": source,
+                "changsheng_status": changsheng_status,
+                "note": f"{zhi}为日主{source}根，查十二长生为{changsheng_status}"
+            })
+    
+    flags["root_analysis"] = {
+        "has_root": len(roots) > 0,
+        "roots": roots
+    }
+    
+    # ========================================
+    # ✅ Part 2: 原有功能（保留）
+    # ========================================
+    
+    # 1. 检查日主有无根（保留，但基于root_analysis判断）
+    flags["日主无根"] = len(roots) == 0
+    
+    # 2. 五行分布统计（保留原逻辑）
+    wuxing_count = {}
+    for gan in bazi_data.all_gans:
+        element = gan_to_element(gan)
+        wuxing_count[element] = wuxing_count.get(element, 0) + 1
+    
+    for zhi in bazi_data.all_zhis:
+        for cang_gan in HIDDEN_STEMS[zhi]:
+            element = gan_to_element(cang_gan)
+            wuxing_count[element] = wuxing_count.get(element, 0) + 0.5
+    
+    total = sum(wuxing_count.values())
+    missing = [e for e in ["木", "火", "土", "金", "水"] if e not in wuxing_count or wuxing_count[e] == 0]
+    
+    flags["五行缺失"] = missing
+    
+    # 3. 五行集中度分析（保留原逻辑）
+    if wuxing_count:
+        max_element = max(wuxing_count, key=wuxing_count.get)
+        max_ratio = wuxing_count[max_element] / total
+        
+        if max_ratio >= 0.6:
+            flags["五行占比异常"] = {
+                "element": max_element,
+                "ratio": round(max_ratio, 2),
+                "note": f"{max_element}占{int(max_ratio*100)}%，显著偏多"
+            }
+        else:
+            flags["五行占比异常"] = None
+    
+    # 4. 阴阳统计（保留原逻辑）
+    yang_gans = ["甲", "丙", "戊", "庚", "壬"]
+    all_yang = all(gan in yang_gans for gan in bazi_data.all_gans)
+    all_yin = all(gan not in yang_gans for gan in bazi_data.all_gans)
+    
+    if all_yang:
+        flags["全阴全阳"] = "全阳"
+    elif all_yin:
+        flags["全阴全阳"] = "全阴"
+    else:
+        flags["全阴全阳"] = None
+    
+    # 5. 生成提示（保留原逻辑）
+    tips = []
+    if flags.get("五行占比异常"):
+        tips.append(f"{flags['五行占比异常']['element']}偏多")
+    if flags["五行缺失"]:
+        tips.append(f"缺{'、'.join(flags['五行缺失'])}")
+    
+    if tips:
+        flags["提示"] = f"该八字{'、'.join(tips)}，五行分布不均，请注意判断是否为特殊格局"
+    else:
+        flags["提示"] = None
+    
+    return flags
+```
+
+---
+
+### 模块1.14：月令司令神计算 🆕 算法实现
+
+```python
+# 月令司令表（依《渊海子平》《三命通会》）
+YUELING_SILING = {
+    "寅": [
+        {"period": "本气", "stem": "甲", "days": 7},
+        {"period": "中气", "stem": "丙", "days": 7},
+        {"period": "余气", "stem": "戊", "days": 16}
+    ],
+    "卯": [
+        {"period": "本气", "stem": "乙", "days": 10},
+        {"period": "中气", "stem": "甲", "days": 20}
+    ],
+    "辰": [
+        {"period": "本气", "stem": "戊", "days": 9},
+        {"period": "中气", "stem": "乙", "days": 3},
+        {"period": "余气", "stem": "癸", "days": 18}
+    ],
+    "巳": [
+        {"period": "本气", "stem": "丙", "days": 7},
+        {"period": "中气", "stem": "戊", "days": 9},
+        {"period": "余气", "stem": "庚", "days": 14}
+    ],
+    "午": [
+        {"period": "本气", "stem": "丁", "days": 10},
+        {"period": "中气", "stem": "己", "days": 9},
+        {"period": "余气", "stem": "丁", "days": 11}
+    ],
+    "未": [
+        {"period": "本气", "stem": "己", "days": 9},
+        {"period": "中气", "stem": "丁", "days": 3},
+        {"period": "余气", "stem": "乙", "days": 18}
+    ],
+    "申": [
+        {"period": "本气", "stem": "庚", "days": 7},
+        {"period": "中气", "stem": "壬", "days": 7},
+        {"period": "余气", "stem": "戊", "days": 16}
+    ],
+    "酉": [
+        {"period": "本气", "stem": "辛", "days": 10},
+        {"period": "中气", "stem": "庚", "days": 20}
+    ],
+    "戌": [
+        {"period": "本气", "stem": "戊", "days": 9},
+        {"period": "中气", "stem": "辛", "days": 3},
+        {"period": "余气", "stem": "丁", "days": 18}
+    ],
+    "亥": [
+        {"period": "本气", "stem": "壬", "days": 7},
+        {"period": "中气", "stem": "甲", "days": 15},
+        {"period": "余气", "stem": "壬", "days": 8}
+    ],
+    "子": [
+        {"period": "本气", "stem": "癸", "days": 9},
+        {"period": "中气", "stem": "壬", "days": 21}
+    ],
+    "丑": [
+        {"period": "本气", "stem": "己", "days": 9},
+        {"period": "中气", "stem": "癸", "days": 3},
+        {"period": "余气", "stem": "辛", "days": 18}
+    ]
+}
+
+def calculate_yueling_siling(birth_datetime, month_zhi, jieqi_time):
+    """
+    计算月令司令神
+    
+    【命理原理】
+    月令不是简单的"平均权重"，而是"时段司令"：
+    - 不同时段，不同藏干100%当令
+    - 这决定了日主的"得令"程度
+    
+    【举例】
+    同样是亥月出生：
+    - 立冬后3天（壬水司令）：丙火处境最凶
+    - 立冬后15天（甲木司令）：丙火有生扶，情况大不同
+    
+    Args:
+        birth_datetime: 出生时间（真太阳时）
+        month_zhi: 月支
+        jieqi_time: 本月节气时刻
+    
+    Returns:
+        {
+            "siling_stem": "甲",  # 当令藏干
+            "siling_element": "木",  # 对应五行
+            "siling_shishen": "正印",  # 对日主的十神
+            "period": "中气",  # 本气/中气/余气
+            "strength": 1.0,  # 司令力量（满分）
+            "days_into_period": 3,  # 进入该时段第几天
+            "note": "出生在亥月甲木司令期（中气），木生火，有利日主"
+        }
+    """
+    # 计算出生日距离节气时刻的天数
+    time_diff = birth_datetime - jieqi_time
+    days_after_jie = time_diff.days + time_diff.seconds / 86400
+    
+    # 根据天数判断在哪个司令期
+    siling_periods = YUELING_SILING[month_zhi]
+    cumulative_days = 0
+    
+    for period in siling_periods:
+        cumulative_days += period["days"]
+        if days_after_jie < cumulative_days:
+            days_into_period = days_after_jie - (cumulative_days - period["days"])
+            
+            return {
+                "siling_stem": period["stem"],
+                "siling_element": gan_to_element(period["stem"]),
+                "siling_shishen": get_shishen(bazi_data.day_gan, period["stem"]),
+                "period": period["period"],
+                "strength": 1.0,
+                "days_into_period": int(days_into_period) + 1,
+                "note": f"出生在{month_zhi}月{period['stem']}司令期（{period['period']}），进入该时段第{int(days_into_period)+1}天"
+            }
+    
+    # 理论上不会走到这里
+    return None
+```
+
+**重要性说明：**
+1. 采用传统命理的"司令日期法"
+2. 精确反映"月令深浅"对旺衰的影响
+
+**给LLM的数据示例：**
+```json
+{
+  "month_zhi": "亥",
+  "hidden_stems": ["壬", "甲"],
+  "siling_info": {
+    "siling_stem": "甲",
+    "siling_element": "木",
+    "siling_shishen": "正印",
+    "period": "中气",
+    "strength": 1.0,
+    "days_into_period": 3,
+    "note": "出生在亥月甲木司令期（中气），进入该时段第3天"
+  }
+}
+```
+
+---
+
+### 模块1.15：天克地冲检测 🆕 算法实现
+
+**用于检测大运与流年的最凶组合**
+
+```python
+def check_tianke_dichong(pillar1, pillar2):
+    """
+    检测天克地冲
+    
+    【命理原理】
+    天克地冲是最凶的组合：
+    - 天干相克 + 地支相冲
+    - 代表变动剧烈、动荡不安
+    - 多主意外、破财、疾病
+    
+    【应用场景】
+    主要用于检测：
+    1. 大运 vs 流年
+    2. 原局 vs 流年（较少）
+    
+    Args:
+        pillar1: {"gan": "甲", "zhi": "寅"}
+        pillar2: {"gan": "庚", "zhi": "申"}
+    
+    Returns:
+        {
+            "is_tianke_dichong": True,
+            "tiangan_ke": "庚克甲",
+            "dizhi_chong": "寅申冲",
+            "severity": "极凶",
+            "note": "天克地冲，此年变动剧烈，需防意外、破财、疾病"
+        }
+    """
+    # 天干相克表
+    TIANGAN_KE = {
+        "甲": ["庚", "辛"],
+        "乙": ["庚", "辛"],
+        "丙": ["壬", "癸"],
+        "丁": ["壬", "癸"],
+        "戊": ["甲", "乙"],
+        "己": ["甲", "乙"],
+        "庚": ["丙", "丁"],
+        "辛": ["丙", "丁"],
+        "壬": ["戊", "己"],
+        "癸": ["戊", "己"]
+    }
+    
+    # 地支相冲表
+    DIZHI_CHONG = {
+        '子': '午', '午': '子',
+        '丑': '未', '未': '丑',
+        '寅': '申', '申': '寅',
+        '卯': '酉', '酉': '卯',
+        '辰': '戌', '戌': '辰',
+        '巳': '亥', '亥': '巳'
+    }
+    
+    gan1, zhi1 = pillar1["gan"], pillar1["zhi"]
+    gan2, zhi2 = pillar2["gan"], pillar2["zhi"]
+    
+    # 检测天干相克（双向）
+    tiangan_ke = (gan2 in TIANGAN_KE.get(gan1, [])) or (gan1 in TIANGAN_KE.get(gan2, []))
+    
+    # 检测地支相冲
+    dizhi_chong = DIZHI_CHONG.get(zhi1) == zhi2
+    
+    if tiangan_ke and dizhi_chong:
+        # 确定克制方向
+        if gan2 in TIANGAN_KE.get(gan1, []):
+            ke_desc = f"{gan2}克{gan1}"
+        else:
+            ke_desc = f"{gan1}克{gan2}"
+        
+        return {
+            "is_tianke_dichong": True,
+            "tiangan_ke": ke_desc,
+            "dizhi_chong": f"{zhi1}{zhi2}冲",
+            "severity": "极凶",
+            "note": "⚠️ 天克地冲，此年变动剧烈，需防意外、破财、疾病、官非"
+        }
+    
+    return {"is_tianke_dichong": False}
+```
+
+---
+
+## 第二阶段：LLM推理（核心）
+
+### 架构设计：三轮对话
+
+```
+【第一轮】格局定性 → 判断是普通格局还是特殊格局
+          ↓
+     ┌────┴────┐
+     │         │
+【分支A】    【分支B】
+特殊格局    普通格局
+顺势取用    ↓
+          【第二轮】旺衰分析
+          ↓
+          【第三轮】用神综合
+```
+
+---
+
+### 第一轮：格局定性 🔥 LLM推理
+
+**Prompt设计：**
+
+```markdown
+【角色】你是一位经验丰富的命理师，正在进行八字分析的第一步：格局定性。
+
+【输入数据】
+
+基本信息：
+- 日主：丙火
+- 性别：男
+- 出生时间：1984-11-07 亥月（冬季）
+
+四柱干支：
+年柱：甲子
+月柱：乙亥
+日柱：丙午
+时柱：己亥
+
+月令透干分析（重要！）：
+- 月支：亥
+- 月令藏干：壬水、甲木
+- 透干检测：
+  * 壬水：未透出 (七杀)
+  * 甲木：透于年干 (偏印)
+- 格局提示：月令甲木透于年干，可取偏印格
+
+地支藏干：
+- 子：癸、壬
+- 亥×2：壬、甲
+- 午：丁、己
+
+月令司令神（重要！）：
+- 司令藏干：甲木
+- 司令期：中气（进入第3天）
+- 对日主：正印（木生火）
+- 说明：出生在亥月甲木司令期，木生火，有利日主
+
+十神标注：
+- 甲木：正印
+- 乙木：偏印
+- 己土：伤官
+- 壬水（亥藏）：正官
+- 癸水（子藏）：七杀
+
+五行统计（仅供参考，不能直接判断旺衰）：
+- 木：4.6个（30%）
+- 火：1.7个（11%）
+- 土：2.0个（13%）
+- 金：0个（0%）
+- 水：7.7个（46%）
+
+⚠️ 注意：五行数量不等于旺衰！必须结合得令、得地、得势综合判断。
+
+刑冲合害：
+- 子午冲：年支与日支相冲
+- 亥亥自刑：月支与时支自刑
+
+格局预警标记：
+- 日主无根：否（午火为帝旺根）
+- 五行缺失：金
+- 五行占比异常：水占46%，显著偏多
+- 提示：该八字水旺木多，五行分布不均，请注意判断是否为特殊格局
+
+---
+
+【分析任务】
+
+请按以下步骤判断格局：
+
+**Step 1：特殊格局排查**
+
+检查是否满足特殊格局条件：
+
+1. 从格（日主极弱，弃命从势）
+   - 日主有无强根？（查异常标记）
+   - 四柱是否某一十神成势（占比>60%且得令透干）？
+   - 判断：是/否
+
+2. 专旺格（某一五行占绝对优势）
+   - 某一五行是否占70%以上？
+   - 日主是否为该五行？
+   - 判断：是/否
+
+3. 化气格（天干合化，化神得令）
+   - 日干是否与他干合化？
+   - 化神是否得令透干？
+   - 判断：是/否
+
+**Step 2：普通格局判断**
+
+如果不是特殊格局，则判断普通格局：
+
+- 看月令司令神：甲木（正印）
+- 甲木是否透干：是（透年干）
+- 初步格局：正印格
+
+**Step 3：最终判定**
+
+请给出结论：
+- 格局类型
+- 判断依据（200字以内）
+- 下一步：进入旺衰分析 / 进入顺势分析
+
+【输出格式】
+json
+{
+  "pattern_category": "普通格局|特殊格局",
+  "pattern_type": "正印格|从格|...",
+  "reasoning": "判断依据",
+  "next_step": "旺衰分析|顺势分析"
+}
+
+```
+
+---
+
+
+### 第二轮A：旺衰分析（普通格局）🔥 LLM推理（修正版）
+
+**Prompt设计：**
+
+```markdown
+【上一步结论】
+格局类型：正印格
+下一步：进入旺衰分析
+
+---
+
+【输入数据】
+
+参考表（已查表）：
+
+1. 旺相休囚死表（冬季亥月）：
+   - 水：旺
+   - 木：相
+   - 金：休
+   - 火：囚
+   - 土：死
+
+2. 十二长生表（丙火）：
+   - 午：帝旺
+   - 亥：绝
+   - 子：胎
+
+3. 月令司令神：
+   - 司令藏干：甲木（正印）
+   - 司令期：中气
+   - 说明：甲木当令，木生火，对日主有利
+
+4.日主根气详细分析（来自模块1.13 root_analysis）：
+- 午火：本气根，十二长生为"帝旺"（最强根）
+  位置：日支
+  状态：受子午冲影响
+- 寅木：无直接根（寅中藏甲丙戊，丙为中气）
+---
+
+【分析任务】
+
+请分析日主丙火的旺衰等级（6级分类）：
+
+**旺衰等级表：**
+- 太旺：过于强旺，需泄耗
+- 偏旺：略强，喜克泄耗
+- 中和：平衡，喜忌不明显
+- 偏弱：略弱，喜生扶
+- 身弱：明显偏弱，急需生扶
+- 太弱：极弱，考虑从格
+
+---
+
+**维度1：得令（权重50%）**
+
+问题：
+- 丙火生于亥月（冬季），查表为"囚"，这意味着什么？
+- 但月令司令神是甲木（正印），甲木当令，木能生火
+- 这种情况下，日主是得令还是失令？
+- 判断：完全失令 / 部分失令 / 勉强得令？
+
+**维度2：得地（权重30%）**
+
+问题：
+- 丙火在地支的根气情况（已由算法分析）：
+  * 午火：本气根 + 帝旺状态（理论上最强）
+  * 但：子午冲，午火受损
+  
+- 请综合判断：
+  1. 本气帝旺根受冲后，实际强度如何？（强根→中根？）
+  2. 是否还有其他间接根？（如亥中甲木生火，算不算根？）
+  
+重要提示：
+- 根的强弱不仅看来源（本气/中气/余气）
+- 更要看是否受刑冲、是否得月令环境支持
+- 请综合分析后给出判断
+
+综合判断：强根 / 中根 / 弱根 / 无根？
+
+**维度3：得势（权重20%）**
+
+问题：
+- 天干：甲乙木透干，能生火，是助力还是阻力？
+- 地支：亥子水旺，克火，是助力还是阻力？
+- 综合环境对日主友好还是敌对？
+
+**维度4：刑冲影响**
+
+- 子午冲对午火根的影响程度？
+- 亥亥自刑的影响程度？
+
+---
+
+【输出要求】
+
+请综合以上分析，给出：
+1. 旺衰等级：太旺 / 偏旺 / 中和 / 偏弱 / 身弱 / 太弱（6选1）
+2. 判断理由（300字以内）
+
+【输出格式】
+json
+{
+  "strength_level": "偏弱",
+  "deling_analysis": "失令但有木气生扶，部分失令",
+  "dedi_analysis": "帝旺根但受冲损失约30%，中等通根",
+  "deshi_analysis": "木生火略胜水克火，微有帮助",
+  "reasoning": "综合分析：虽然冬月火囚，但月令甲木司令，木生火，给了日主生机。午火帝旺根虽被冲损，仍有余力。天干甲乙木透干，形成生扶之势。整体判定为偏弱，需要生扶但不至于太弱。"
+}
+
+```
+
+
+---
+
+### 第二轮B：顺势分析（特殊格局）🔥 LLM推理
+
+```markdown
+【上一步结论】
+格局类型：从儿格（疑似）
+下一步：验证成格条件
+
+---
+
+【从格成格条件】
+
+从儿格（从食伤）的标准：
+1. 日主无根或根极弱
+2. 满盘食伤，势不可挡（食伤占比>60%且得令）
+3. 无印星帮身（或印星无力）
+4. 无比劫助身（或比劫无力）
+
+---
+
+【分析任务】
+
+请逐条验证：
+
+1. 日主在地支有无强根？
+   - 查十二长生表
+   - 判断根的强度
+
+2. 食伤（假设是木）的力量如何？
+   - 数量占比
+   - 是否得令（查月令司令神）
+   - 是否透干
+
+3. 是否有印星破格？
+   - 印星的数量和力量
+   - 是否足以破格
+
+4. 是否有比劫破格？
+   - 比劫的数量和力量
+   - 是否足以破格
+
+---
+
+【判定】
+
+- 真从：纯粹从儿，无破格因素（层次高）
+- 假从：有破格因素但不足以破格（层次中）
+- 不从：破格因素太强，不成从格（按普通格局论）
+
+【输出格式】
+json
+{
+  "pattern_status": "真从|假从|不从",
+  "reasoning": "...",
+  "useful_gods": ["木", "水"],
+  "taboo_gods": ["火", "金"]
+}
+
+```
+
+
+---
+
+### 第三轮：用神综合 🔥 LLM推理
+
+**Prompt设计：**
+
+```markdown
+【上一步结论】
+旺衰等级：偏弱
+判断理由：虽然冬月火囚，但月令甲木司令，木生火，给了日主生机...
+
+---
+
+【输入数据】
+
+参考表（已查表）：
+（保持原有内容）
+
+🆕 刑冲合害关系（算法提供）：
+- 子午冲（年支 vs 日支）
+- （如果有合）子丑合（年支 vs 某支）
+
+---
+
+【分析任务】
+
+====================================================
+   Step 0：地支关系优先级判断（前置步骤）
+====================================================
+
+⚠️ 当合与冲同时存在时，需要先判断优先级
+
+【检测到的关系】
+- 子午冲（年支 vs 日支）
+- 子丑合（年支 vs 大运地支，如果存在）
+
+【判断任务】
+如果同时存在合与冲，请分析：
+
+1. 合的力量评估：
+   - 合神（丑土）是否得令有力？
+   - 合化条件是否成立？
+
+2. 优先级判断：
+   - 如果合力强 → "贪合忘冲"（合占主导，冲减弱）
+   - 如果合力弱 → 冲仍有效
+
+3. 对根气的影响：
+   - 如果贪合忘冲，午火根得到保护
+   - 如果冲仍有效，午火根受损
+
+请明确说明：本案是"贪合忘冲"还是"冲占主导"，并据此调整对根气稳定性的判断。
+
+🔻 完成Step 0后，再进入用神选择 🔻
+
+====================================================
+   Step 1：用神选择 - 三法综合
+====================================================
+
+请分别从三个维度分析用神，然后综合判断：
+
+
+**维度1：扶抑法**
+
+规则（根据旺衰等级）：
+- 太旺 → 必须泄耗（食伤、财星）
+- 偏旺 → 克泄耗均可（官杀、食伤、财星）
+- 中和 → 维持平衡
+- 偏弱 → 生扶为主（印星、比劫）
+- 身弱 → 必须生扶（印星、比劫）
+- 太弱 → 考虑从格
+
+本案分析：
+- 日主偏弱 → 需要生扶
+- 印星（木）：木生火，能否用？
+- 比劫（火）：火帮火，能否用？
+- 综合判断扶抑用神：？
+
+**维度2：调候法**
+
+查表：丙火生于亥月（冬季）
+- 《穷通宝鉴》：甲木为先，忌壬癸水
+- 理由：冬火如烛，需木生火取暖
+
+本案分析：
+- 调候需要什么？
+- 与扶抑法是否一致？
+
+**维度3：通关法**
+
+命局矛盾检测：
+- 子午冲（水火相战）
+- 需要通关神化解
+
+本案分析：
+- 水火相战，用什么通关？
+- 木（水生木，木生火）是否可行？
+
+---
+
+====================================================
+   Step 2：三法综合与冲突仲裁
+====================================================
+
+🆕 规则（当三法结论冲突时）：
+
+**优先级1：生存优先**
+- 如果日主"太弱"或"身弱"，扶抑法优先于调候法
+- 理由：生存是第一位的，命都保不住谈何调候
+- 示例：庚金子月身弱，虽然冬金需火暖，但身弱必须先用土金扶身
+
+**优先级2：极端失衡优先**  
+- 如果八字"极寒"(冬水一片无火)或"极燥"(夏火炎炎无水)，调候法优先
+- 理由：五行极度失衡会导致格局低下，宁可身弱也要调和
+- 示例：丙火生于子月满盘水，即使身旺也必须用甲木调候
+
+**优先级3：通关作为桥梁**
+- 如果扶抑和调候矛盾，优先考虑能否用通关神兼顾
+- 示例：庚金子月，用戊土既生金扶身，又能暖局调候
+
+【本案三法判断】
+
+本案情况：
+- 扶抑法：需要？
+- 调候法：需要？
+- 通关法：需要？
+- 是否存在冲突：？
+
+请按以上优先级规则，给出最终用神选择，并说明理由。
+
+---
+
+【输出格式】
+json
+{
+  "primary_god": {
+    "element": "木",
+    "functions": ["生扶日主", "调候取暖", "化解水克"],
+    "priority": "highest"
+  },
+  "secondary_god": {
+    "element": "火",
+    "functions": ["帮身"],
+    "priority": "medium"
+  },
+  "taboo_gods": [
+    {"element": "水", "severity": "high", "reason": "克火且当旺"},
+    {"element": "土", "severity": "medium", "reason": "泄火气"},
+    {"element": "金", "severity": "medium", "reason": "克木破用神"}
+  ]
+}
+
+```
+
+---
+
+## 第三阶段：大运流年分析
+
+### 模块3.1：大运排法 ✅ 算法实现（补全版）
+
+**🔧 重要补全：起运时间算法完整实现**
+
+```python
+def determine_dayun_direction(year_gan, gender):
+    """
+    确定大运顺逆
+    
+    规则：
+    - 阳男阴女：顺排
+    - 阴男阳女：逆排
+    """
+    yang_gan = ['甲', '丙', '戊', '庚', '壬']
+    
+    if year_gan in yang_gan:
+        return "顺排" if gender == "男" else "逆排"
+    else:
+        return "顺排" if gender == "女" else "逆排"
+
+
+def calculate_qiyun_age(birth_datetime, year_jie_list, direction):
+    """
+    计算起运岁数
+    
+    规则：
+    - 顺排：从出生时刻顺数到下一个"节"
+    - 逆排：从出生时刻逆数到上一个"节"
+    - 3天=1岁，1天=4个月，1时辰=10天
+    
+    Args:
+        birth_datetime: 出生时间（真太阳时）
+        year_jie_list: 当年和相邻年份的节气列表
+        direction: "顺排" 或 "逆排"
+    
+    Returns:
+        {
+            "qiyun_age": 3,
+            "qiyun_date": "1987-11-07",
+            "target_jie": "大雪",
+            "days_diff": 10.5,
+            "calculation": "10.5天 ÷ 3 = 3.5岁，取整为3岁"
+        }
+    """
+    if direction == "顺排":
+        target_jie = find_next_jie(birth_datetime, year_jie_list)
+    else:
+        target_jie = find_previous_jie(birth_datetime, year_jie_list)
+    
+    # 计算时间差（精确到秒）
+    time_diff = abs((target_jie["datetime"] - birth_datetime).total_seconds())
+    
+    # 转换为天数（包含小数）
+    days = time_diff / 86400
+    
+    # 3天 = 1岁
+    years = days / 3
+    
+    # 取整（四舍五入）
+    qiyun_age = round(years)
+    
+    # 如果起运岁数为0，按1岁起运（命理惯例）
+    if qiyun_age == 0:
+        qiyun_age = 1
+    
+    # 计算起运日期（粗略估算）
+    qiyun_date = birth_datetime + timedelta(days=365.25 * qiyun_age)
+    
+    return {
+        "qiyun_age": qiyun_age,
+        "qiyun_date": qiyun_date.strftime("%Y-%m-%d"),
+        "target_jie": target_jie["name"],
+        "days_diff": round(days, 2),
+        "calculation": f"{round(days, 2)}天 ÷ 3 = {round(years, 2)}岁，取整为{qiyun_age}岁"
+    }
+
+
+def find_next_jie(birth_datetime, year_jie_list):
+    """
+    找到出生后的下一个"节"
+    
+    注意：只找"节"，不找"气"
+    节：立春、惊蛰、清明、立夏、芒种、小暑、立秋、白露、寒露、立冬、大雪、小寒
+    """
+    jie_names = ["立春", "惊蛰", "清明", "立夏", "芒种", "小暑", 
+                 "立秋", "白露", "寒露", "立冬", "大雪", "小寒"]
+    
+    for jieqi in year_jie_list:
+        if jieqi["name"] in jie_names and jieqi["datetime"] > birth_datetime:
+            return jieqi
+    
+    # 如果当年没有，找下一年的第一个节（立春）
+    next_year_lichun = get_lichun(birth_datetime.year + 1)
+    return {"name": "立春", "datetime": next_year_lichun}
+
+
+def find_previous_jie(birth_datetime, year_jie_list):
+    """
+    找到出生前的上一个"节"
+    """
+    jie_names = ["立春", "惊蛰", "清明", "立夏", "芒种", "小暑", 
+                 "立秋", "白露", "寒露", "立冬", "大雪", "小寒"]
+    
+    # 倒序查找
+    for jieqi in reversed(year_jie_list):
+        if jieqi["name"] in jie_names and jieqi["datetime"] < birth_datetime:
+            return jieqi
+    
+    # 如果当年没有，找上一年的最后一个节（小寒）
+    prev_year_xiaohan = get_xiaohan(birth_datetime.year - 1)
+    return {"name": "小寒", "datetime": prev_year_xiaohan}
+
+
+def generate_dayun_sequence(month_gan, month_zhi, direction, qiyun_age):
+    """
+    生成大运序列
+    
+    Args:
+        month_gan: 月柱天干
+        month_zhi: 月柱地支
+        direction: "顺排" 或 "逆排"
+        qiyun_age: 起运岁数
+    
+    Returns:
+        [
+            {"age_range": "3-12岁", "start_age": 3, "end_age": 12, "gan": "丙", "zhi": "子", "pillar": "丙子"},
+            {"age_range": "13-22岁", "start_age": 13, "end_age": 22, "gan": "丁", "zhi": "丑", "pillar": "丁丑"},
+            ...
+        ]
+    """
+    gan_sequence = ['甲', '乙', '丙', '丁', '戊', '己', '庚', '辛', '壬', '癸']
+    zhi_sequence = ['子', '丑', '寅', '卯', '辰', '巳', '午', '未', '申', '酉', '戌', '亥']
+    
+    # 找到月柱干支的索引
+    current_gan_index = gan_sequence.index(month_gan)
+    current_zhi_index = zhi_sequence.index(month_zhi)
+    
+    dayun_list = []
+    current_age = qiyun_age
+    
+    for i in range(8):  # 一般排8步大运
+        if direction == "顺排":
+            gan_index = (current_gan_index + i + 1) % 10
+            zhi_index = (current_zhi_index + i + 1) % 12
+        else:  # 逆排
+            gan_index = (current_gan_index - i - 1) % 10
+            zhi_index = (current_zhi_index - i - 1) % 12
+        
+        gan = gan_sequence[gan_index]
+        zhi = zhi_sequence[zhi_index]
+        
+        dayun_list.append({
+            "age_range": f"{current_age}-{current_age + 9}岁",
+            "start_age": current_age,
+            "end_age": current_age + 9,
+            "gan": gan,
+            "zhi": zhi,
+            "pillar": f"{gan}{zhi}"
+        })
+        
+        current_age += 10
+    
+    return dayun_list
+```
+
+---
+
+### 模块3.2：大运吉凶判断 🔥 LLM推理
+
+**Prompt设计：**
+
+```markdown
+【任务】分析各步大运的吉凶（10年一个周期）
+
+【输入数据】
+
+用神体系（已确定）：
+- 用神：木
+- 忌神：水（高）、土（中）、金（中）
+
+日主旺衰：偏弱
+
+大运列表：
+1. 3-12岁：丙子运
+2. 13-22岁：丁丑运
+3. 23-32岁：戊寅运
+4. 33-42岁：己卯运
+5. 43-52岁：庚辰运
+...
+
+---
+
+【分析任务】
+
+请逐一分析每步大运的10年总体基调：
+
+**第1步大运：3-12岁 丙子运**
+
+1. 天干分析
+   - 丙火是比肩，帮身
+   - 对偏弱的日主是吉是凶？
+
+2. 地支分析
+   - 子水是七杀（忌神）
+   - 子水与原局的关系（有无合冲）？
+
+3. 综合判断
+   - 这10年的整体基调：吉/平/凶
+   - 吉凶等级：★★★☆☆（1-5星）
+   - 一句话概括（50字以内）
+
+---
+
+**第2步大运：13-22岁 丁丑运**
+
+（同样的分析框架）
+
+---
+
+【输出格式】
+json
+{
+  "dayun_analysis": [
+    {
+      "age_range": "3-12岁",
+      "pillar": "丙子",
+      "rating": 3,
+      "theme": "童年期，丙火帮身略有助力，但子水忌神克制，整体平中偏下，注意健康",
+      "gan_analysis": "丙火比肩，帮身，小吉",
+      "zhi_analysis": "子水七杀忌神，克身，且冲午根，凶",
+      "overall": "天干小吉，地支大凶，整体不佳"
+    },
+    {
+      "age_range": "13-22岁",
+      "pillar": "丁丑",
+      "rating": 3,
+      "theme": "青春期，丁火帮身，但丑土晦火，学业压力大",
+      "gan_analysis": "丁火劫财，帮身，吉",
+      "zhi_analysis": "丑土食神泄气，且湿土晦火，平中偏下",
+      "overall": "天干吉，地支平，整体中等"
+    },
+    {
+      "age_range": "23-32岁",
+      "pillar": "戊寅",
+      "rating": 4,
+      "theme": "青年上升期，寅木用神有力，事业开始发展",
+      "gan_analysis": "戊土伤官泄气，小凶",
+      "zhi_analysis": "寅木用神，生扶日主，大吉",
+      "overall": "地支大吉压过天干小凶，整体较好"
+    }
+  ]
+}
+
+```
+
+---
+
+
+### 模块3.3：流年合冲检测 ✅ 算法实现（扩充版）
+
+**🔧 重要扩充：增加大运vs流年检测**
+
+```python
+def check_yearly_interactions(original_bazi, dayun, liunian):
+    """
+    检测流年与原局、大运的刑冲合害
+    
+    Args:
+        original_bazi: 原局八字
+        dayun: 当前大运 {"gan": "戊", "zhi": "寅"}
+        liunian: 流年 {"year": 2024, "gan": "甲", "zhi": "辰"}
+    
+    Returns:
+        {
+            "liunian_vs_yuanju": [...],  # 流年与原局
+            "liunian_vs_dayun": [...],   # 流年与大运
+            "tianke_dichong": {...},      # 天克地冲检测
+             "suiyun_binglin": {...}  # 🆕 新增岁运并临检测
+        }
+    """
+    interactions = {
+        "liunian_vs_yuanju": [],
+        "liunian_vs_dayun": [],
+        "tianke_dichong": {},
+        "suiyun_binglin": {} 
+    }
+    
+    # ========================================
+    # 1. 流年 vs 原局
+    # ========================================
+    positions = {
+        "年支": original_bazi.year_zhi,
+        "月支": original_bazi.month_zhi,
+        "日支": original_bazi.day_zhi,
+        "时支": original_bazi.hour_zhi
+    }
+    
+    for pos_name, original_zhi in positions.items():
+        # 六合检测
+        if is_liuhe(liunian["zhi"], original_zhi):
+            hua_element = get_hehuan_element(liunian["zhi"], original_zhi)
+            interactions["liunian_vs_yuanju"].append({
+                "type": "六合",
+                "liunian_zhi": liunian["zhi"],
+                "original_position": pos_name,
+                "original_zhi": original_zhi,
+                "hehuan_element": hua_element,
+                "note": f"流年{liunian['zhi']}与{pos_name}{original_zhi}六合化{hua_element}"
+            })
+        
+        # 六冲检测
+        if is_liuchong(liunian["zhi"], original_zhi):
+            interactions["liunian_vs_yuanju"].append({
+                "type": "六冲",
+                "liunian_zhi": liunian["zhi"],
+                "original_position": pos_name,
+                "original_zhi": original_zhi,
+                "note": f"流年{liunian['zhi']}与{pos_name}{original_zhi}相冲"
+            })
+    
+    # ========================================
+    # 2. 流年 vs 大运（重要！）
+    # ========================================
+    
+    # 六合检测
+    if is_liuhe(liunian["zhi"], dayun["zhi"]):
+        hua_element = get_hehuan_element(liunian["zhi"], dayun["zhi"])
+        interactions["liunian_vs_dayun"].append({
+            "type": "六合",
+            "note": f"流年{liunian['zhi']}与大运{dayun['zhi']}六合化{hua_element}"
+        })
+    
+    # 六冲检测
+    if is_liuchong(liunian["zhi"], dayun["zhi"]):
+        interactions["liunian_vs_dayun"].append({
+            "type": "六冲",
+            "note": f"流年{liunian['zhi']}与大运{dayun['zhi']}相冲"
+        })
+    
+    # 🆕 天克地冲检测（最凶！）
+    tianke_dichong_result = check_tianke_dichong(
+        {"gan": dayun["gan"], "zhi": dayun["zhi"]},
+        {"gan": liunian["gan"], "zhi": liunian["zhi"]}
+    )
+    interactions["tianke_dichong"] = tianke_dichong_result
+    
+    
+    # 🆕 岁运并临检测（最凶组合之一）
+    if dayun["gan"] == liunian["gan"] and dayun["zhi"] == liunian["zhi"]:
+        interactions["suiyun_binglin"] = {
+            "is_binglin": True,
+            "pillar": f"{dayun['gan']}{dayun['zhi']}",
+            "severity": "极凶",
+            "note": f"⚠️ 岁运并临（大运流年干支完全相同），主大变动、重大事件，需谨慎应对"
+        }
+    else:
+        interactions["suiyun_binglin"] = {"is_binglin": False}
+
+    return interactions
+```
+
+---
+
+### 模块3.4：流年吉凶判断 🔥 LLM推理
+
+**Prompt设计：**
+
+```markdown
+【任务】分析具体年份的吉凶（在大运背景下）
+
+【当前状态】
+
+大运：23-32岁 戊寅运
+- 大运评级：★★★★☆（较好）
+- 大运特点：寅木用神有力，戊土虽泄气但整体偏吉
+- 这是一个上升期
+
+流年：2024年 甲辰
+- 天干：甲木（正印，用神）
+- 地支：辰土（食神，忌神）
+
+用神体系：
+- 用神：木
+- 忌神：水（高）、土（中）、金（中）
+
+原局旺衰：偏弱（需要生扶）
+
+---
+
+【流年合冲检测结果】（算法提供）
+
+流年与原局：
+- 无六合
+- 无六冲
+- 无三刑
+
+流年与大运：
+- 无六合
+- 无六冲
+- 天克地冲检测：否
+- 岁运并临：否
+
+---
+
+【分析任务】
+
+====================================================
+   Step 0：旺衰动态复盘（关键！必须先做）
+====================================================
+
+⚠️ 重要提示：大运和流年会改变日主的强弱状态，必须先重新评估！
+
+【原局状态】
+- 日主旺衰：偏弱
+- 原因：冬月火囚，虽有木生但整体偏弱
+
+【当前能量叠加】
+- 大运：戊寅
+  * 寅木：用神，生扶日主
+  * 戊土：泄气，但寅木力量更强
+  
+- 流年：甲辰
+  * 甲木：透干，用神，生扶日主
+  * 辰土：泄气
+
+- 合并效果：
+  * 大运寅木 + 流年甲木 = 木的力量在这个时段非常强
+  * 木生火，日主得到双重生扶
+
+【重要判断】
+请分析：在大运+流年的双重生扶下，日主当前的实际强弱状态：
+
+1. 仍然偏弱？
+   - 木的力量虽强，但仍不足以让日主转强
+   - 用神体系不变：木仍是用神
+
+2. 转为中和？
+   - 木的生扶恰到好处，日主达到平衡
+   - 用神调整：木转为平神（不喜不忌）
+
+3. 转为偏旺？
+   - 木的力量过强，日主反而太旺
+   - 用神调整：木转为忌神（过犹不及）
+
+【输出要求】
+请明确给出：
+- 本年度日主实际强弱：偏弱 / 中和 / 偏旺
+- 用神调整：木（用神/平神/忌神）
+- 调整理由：（100字以内）
+
+🔻 完成旺衰复盘后，再进行流年分析 🔻
+
+====================================================
+   Step 1：大运+流年联动分析
+====================================================
+
+基于Step 0确定的旺衰状态，分析大运与流年的互动：
+
+**1. 天干互动**
+
+大运戊土 vs 流年甲木：
+- 甲木克戊土（用神制忌神，假设木仍是用神）
+- 这是好事还是坏事？
+- 克的力度如何？
+
+**2. 地支互动**
+
+大运寅木 vs 流年辰土：
+- 寅木是用神（假设），辰土是忌神
+- 辰土会不会损伤寅木？
+- 寅辰之间有无特殊关系？（查算法提供的合冲结果）
+
+**3. 综合环境**
+
+- 天干：甲木透干的力量
+- 地支：寅木 + 辰土的组合
+- 整体对日主是增益还是减损？
+
+====================================================
+   Step 2：流年干支分体分析
+====================================================
+
+**流年天干：甲木**
+
+1. 甲木对日主的作用：
+   - 甲木是正印（生扶日主）
+   - 透出力量如何？（天干力量直接）
+
+2. 甲木的实际意义：
+   - 事业：贵人、上司、长辈
+   - 学习：学习机会、培训
+   - 健康：精神状态、睡眠
+
+**流年地支：辰土**
+
+1. 辰土对日主的作用：
+   - 辰土是食神（泄日主气）
+   - 辰土藏干：戊土、乙木、癸水
+   - 哪个藏干在本年最有影响？
+
+2. 辰土的实际意义：
+   - 事业：表达、展示、创意
+   - 财运：投资、消费
+   - 健康：脾胃、消化系统
+
+====================================================
+   Step 3：综合判断与分领域分析
+====================================================
+
+【整体基调】
+
+在大运戊寅（整体较好）的背景下：
+- 本年是锦上添花？还是美中不足？
+- 本年的主旋律是什么？（用一句话概括）
+- 吉凶评级：1-5星
+
+【分领域分析】
+
+**1. 事业运**
+- 甲木透干（贵人）+ 辰土（才华表达）
+- 综合判断：？
+- 具体建议：？
+
+**2. 财运**
+- 木旺生火，火生土（财）
+- 但辰土是否为财要看用神调整
+- 综合判断：？
+- 具体建议：？
+
+**3. 健康**
+- 木旺对日主的影响
+- 辰土对脾胃的影响
+- 需要注意什么？
+
+**4. 感情**
+- 如适用
+- 综合判断：？
+
+【月份提示】
+哪些月份运势最好？哪些月份需谨慎？
+（提示：木旺月份如寅卯月、水旺月份如亥子月等）
+
+【行动建议】
+基于本年特点，给出3-5条可执行建议
+
+---
+
+【输出格式】
+json
+{
+  "year": 2024,
+  "dayun_context": "戊寅运整体较好，处于上升期",
+  
+  "dynamic_wangshuai": {
+    "current_strength": "中和",
+    "yongshen_adjustment": "木转为平神",
+    "reason": "大运流年木旺，日主由偏弱转为中和，木从用神转为平神"
+  },
+  
+  "liunian_theme": "在好运中的平稳年份，木旺但已不需要过多生扶，主维持现状",
+  "overall_rating": 4,
+  
+  "detailed_analysis": {
+    "career": "甲木透干，工作有贵人相助，但不宜过于激进，稳扎稳打为宜",
+    "wealth": "收入稳定，辰土食神主消费，开支较多，注意节约",
+    "health": "整体良好，但木旺需注意肝气，辰土注意脾胃，少吃生冷",
+    "relationship": "感情平稳，单身者有桃花机会但不强"
+  },
+  
+  "monthly_tips": "农历二月（卯月）、三月（辰月）运势最佳，农历十月（亥月）、十一月（子月）需谨慎（水旺克火）",
+  
+  "advice": [
+    "主动维护人际关系，贵人运佳",
+    "财务量入为出，避免冲动消费",
+    "注意肝气舒畅，保持心情愉悦",
+    "工作稳中求进，不宜冒险"
+  ]
+}
+
+```
+
+
+---
+
+
+## 第四阶段：输出层
+
+### 模块4.1：白话翻译与安全过滤 🔥 LLM处理
+
+**输出原则：**
+
+1. **术语白话化**
+   ```
+   比肩夺财 → 今年可能因朋友或合伙人导致财务支出
+   七杀攻身 → 今年压力较大，需注意情绪管理
+   食神制杀 → 工作能力得到发挥，能化解压力
+   ```
+
+2. **恐吓内容转化**
+   ```
+   ❌ "血光之灾"
+   ✓ "注意安全，避免危险运动，定期体检"
+   
+   ❌ "今年必有官非"
+   ✓ "今年容易与权威人士产生摩擦，注意沟通方式"
+   ```
+
+3. **方位冲突提示**
+   ```
+   ❌ "您适合东方"
+   ✓ "您适合多接触东方、东南方的能量，但如果八字中木受严重刑冲，需具体分析"
+   ```
+
+---
+
+### 模块4.2：最终报告模板
+
+```markdown
+# 您的八字分析报告
+
+## 基本信息
+- 出生时间：1984年11月7日 22:30（北京时间）
+- 真太阳时：1984年11月7日 22:32
+- 出生地：北京
+- 性别：男
+
+## 四柱八字
+```
+年柱：甲子
+月柱：乙亥
+日柱：丙午
+时柱：己亥
+```
+
+---
+
+## 您的命理特点
+
+### 性格特质
+您是一个温和、有责任心、重感情的人，思考问题深入细致。
+
+### 能量状态
+您的生命能量属于**偏弱型**
+- 就像冬天的火苗，需要不断补充能量
+- 适合稳定发展，不适合高强度竞争
+
+### 五行分布
+```
+木 ████████░░ 30%
+火 ██░░░░░░░░ 11%
+土 ███░░░░░░░ 13%
+金 ░░░░░░░░░░  0%（缺失）
+水 ████████░░ 46%
+```
+
+---
+
+## 人生建议
+
+### 开运方向
+
+**🧭 有利方位：** 东方、东南方  
+**🎨 有利颜色：** 绿色系、青色系  
+**🌱 有利元素：** 木
+
+### 适合的职业方向
+
+⭐⭐⭐⭐⭐ **强烈推荐：**
+- 文化教育（教师、培训师）
+- 文字创作（编辑、作家）
+- 医药健康（中医、护理）
+
+⭐⭐⭐ **可以考虑：**
+- 设计创意
+- 咨询服务
+
+❌ **不太适合：**
+- 金融证券（竞争压力大）
+- 金属制造（五行不利）
+
+---
+
+## 大运流年
+
+### 一生运势概览
+
+**3-12岁（童年期）** ★★★☆☆  
+家庭环境尚可，但身体略弱
+
+**13-22岁（青春期）** ★★★☆☆  
+学业平稳，性格养成期
+
+**23-32岁（青年期）** ★★★★☆  
+**人生上升期**，事业开始发展
+
+**33-42岁（中年期）** ★★★★★  
+**黄金期**，事业财运俱佳
+
+---
+
+### 近期运势（2024-2028）
+
+#### 2024年（甲辰年）★★★★☆
+
+**整体：** 较好的一年  
+**事业：** 有贵人相助，把握机会  
+**财运：** 收入增加，注意节约  
+**健康：** 注意脾胃，适度运动  
+**感情：** 平稳发展
+
+---
+
+**祝您前程似锦，一帆风顺！**
+```
+
+---
+
+## 【最终架构图】
+
+```
+┌─────────────────────────────────────────┐
+│          第一层：算法层（确定性数据）       │
+│                                           │
+│  [数据采集] → [真太阳时] → [四柱排盘]      │
+│       ↓                                   │
+│  [地支藏干] → [十神标注] → [刑冲检测]      │
+│       ↓                                   │
+│  [五行统计] → [查表数据] → [异常标记]      │
+│       ↓                                   │
+│  🆕 [月令司令神] → [天克地冲检测]          │
+│                                           │
+│  输出：结构化JSON数据                      │
+└──────────────┬──────────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────────┐
+│        第二层：LLM推理层（定性分析）        │
+│                                           │
+│  [第一轮] 格局定性                         │
+│      ├─ 特殊格局 → 顺势分析               │
+│      └─ 普通格局 ↓                        │
+│                                           │
+│  [第二轮] 旺衰分析（6级分类）              │
+│      ├─ 得令分析（基于月令司令神）         │
+│      ├─ 得地分析                          │
+│      └─ 得势分析                          │
+│           ↓                               │
+│  [第三轮] 用神综合                         │
+│      ├─ 扶抑法                            │
+│      ├─ 调候法                            │
+│      ├─ 通关法                            │
+│      └─ 三法综合                          │
+│           ↓                               │
+│  [第四轮] 大运流年                         │
+│                                           │
+│  输出：结构化结论                          │
+└──────────────┬──────────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────────┐
+│       第三层：输出层（用户友好）            │
+│                                           │
+│  [术语翻译] → [安全过滤] → [报告生成]      │
+│                                           │
+│  输出：白话文报告                          │
+└─────────────────────────────────────────┘
+```
+
+---
+
+## 【核心设计原则】
+
+### ✅ 算法的职责（做"书记员"）
+
+1. **提供客观事实**
+   - 四柱干支
+   - 地支藏干（存在性）
+   - 节气时刻
+
+2. **提供查询结果**
+   - 旺相休囚死表
+   - 十二长生表
+   - 调候速查表
+   - 🆕 月令司令神（关键！）
+
+3. **标注关系存在性**
+   - 刑冲合害（位置+类型）
+   - 🆕 天克地冲（最凶组合）
+
+4. **统计数据**
+   - 五行分布（辅助参考）
+   - 异常特征（格局预警）
+
+### ❌ 算法不做的事
+
+- 不计算"力度系数"（主观判断）
+- 不计算"成功率百分比"（伪精确）
+- 不预判吉凶（复杂推理）
+- 不替代LLM思考
+
+---
+
+### ✅ LLM的职责（做"命理师"）
+
+1. **定性分析**
+   - 格局判断
+   - 旺衰评估（6级分类）
+   - 用神选择
+
+2. **综合推理**
+   - 三法综合（扶抑+调候+通关）
+   - 冲突仲裁
+   - 流年判断
+
+3. **人性化表达**
+   - 白话翻译
+   - 安全过滤
+   - 建议生成
+
+### ❌ LLM不做的事
+
+- 不查表（容易幻觉）
+- 不计算节气（精度问题）
+- 不做简单统计（算法更准确）
+
+---

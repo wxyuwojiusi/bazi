@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Data & Temp files
+output_full.json
+manual_prompt_*.md
+manual_runner_*.md
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store

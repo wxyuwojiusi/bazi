@@ -1,0 +1,34 @@
+{
+  "liunian": {
+    "year": 2024,
+    "gan": "甲",
+    "zhi": "辰"
+  },
+  "current_dayun": {
+    "age_range": "31-40岁",
+    "start_age": 31,
+    "end_age": 40,
+    "gan": "戊",
+    "zhi": "寅",
+    "pillar": "戊寅",
+    "nayin": "城头土"
+  },
+  "interactions": {
+    "liunian_vs_yuanju": [
+      {
+        "type": "六冲",
+        "liunian_zhi": "辰",
+        "original_position": "月支",
+        "original_zhi": "戌",
+        "note": "流年辰与月支戌相冲"
+      }
+    ],
+    "liunian_vs_dayun": [],
+    "tianke_dichong": {
+      "is_tianke_dichong": false
+    },
+    "suiyun_binglin": {
+      "is_binglin": false
+    }
+  }
+}
