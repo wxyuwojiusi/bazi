@@ -344,7 +344,49 @@ class BaziReference:
     }
     
     # ============================================
-    # 纳音表（可选，用于增强报告）
+    # 🆕 开运元素映射表
+    # ============================================
+    
+    LUCK_ELEMENTS_MAP = {
+        "木": {
+            "directions": "东方",
+            "colors": "绿色、青色、碧绿色",
+            "numbers": "1, 2",
+            "careers": "林业、木材、家具、造纸、文化教育、医疗卫生、绿化园艺",
+            "environment": "公园、森林、茂盛的草地、木质结构建筑、书房"
+        },
+        "火": {
+            "directions": "南方",
+            "colors": "红色、紫色、粉红色、橙色",
+            "numbers": "3, 4",
+            "careers": "热能、电力、光学、餐饮、演艺娱乐、美容化妆、互联网、高新科技",
+            "environment": "阳光充足处、厨房、演播厅、红砖房、烧烤店"
+        },
+        "土": {
+            "directions": "西南、东北、本地",
+            "colors": "黄色、咖啡色、棕色、褐色",
+            "numbers": "5, 6",
+            "careers": "建筑、房地产、农业、石材、矿业、质押典当、托儿养老、中介",
+            "environment": "平原、土山、地下室、混凝土建筑、陶瓷店"
+        },
+        "金": {
+            "directions": "西方、西北",
+            "colors": "白色、金色、银色",
+            "numbers": "7, 8",
+            "careers": "金属、机械、汽车、金融、珠宝、法律、武职、体育竞技、精算、管理",
+            "environment": "五金店、银行、珠宝店、金属质感建筑、健身房"
+        },
+        "水": {
+            "directions": "北方",
+            "colors": "黑色、蓝色、深灰色",
+            "numbers": "9, 0",
+            "careers": "水产、航运、贸易、旅游、物流快递、水利工程、心理咨询、策划设计",
+            "environment": "水边、海滨、潜水场所、池塘、水景园林、洗浴中心"
+        }
+    }
+    
+    # ============================================
+    # 纳音表（模块1.14核心数据）
     # ============================================
     
     NAYIN_TABLE = {
@@ -423,11 +465,7 @@ class BaziReference:
             十神名称（如"正印"、"偏财"等）
         """
         if day_gan == other_gan:
-            # 同干判断阴阳
-            if day_gan in BaziReference.YANG_STEMS:
-                return '比肩'
-            else:
-                return '比肩'
+            return '比肩'
         
         day_element = BaziReference.STEM_TO_ELEMENT[day_gan]
         other_element = BaziReference.STEM_TO_ELEMENT[other_gan]

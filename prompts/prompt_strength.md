@@ -93,8 +93,8 @@
 {
   "strength_level": "偏弱",
   "strength_conclusion": "基于得令、得地、得势的综合旺衰判断依据...",
-  "deling_analysis": "...",
-  "dedi_analysis": "...",
-  "deshi_analysis": "..."
+  "deling_analysis": "生于...月，...令，故...",
+  "dedi_analysis": "地支有...根，虽然...",
+  "deshi_analysis": "天干...帮身，力量..."
 }
 ```

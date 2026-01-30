@@ -18,18 +18,18 @@ def main():
     service = BaziService()
     
     # 输入信息
-    # birth_date = "1990-04-26"
-    # birth_time = "00:53"
-    # longitude = 104.68
-    # latitude = 31.03
-    # gender = "女"
+    birth_date = "1990-04-26"
+    birth_time = "00:53"
+    longitude = 104.68
+    latitude = 31.03
+    gender = "女"
 
 
-    birth_date = "1984-11-06"
-    birth_time = "03:00"
-    longitude = 98.588  # 经度
-    latitude = 24.43    # 纬度
-    gender = "男"
+    # birth_date = "1984-11-06"
+    # birth_time = "03:00"
+    # longitude = 98.588  # 经度
+    # latitude = 24.43    # 纬度
+    # gender = "男"
     
     print(f"\n输入参数:")
     print(f"  出生日期: {birth_date}")

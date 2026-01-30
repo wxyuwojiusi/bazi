@@ -114,7 +114,12 @@ class ReasoningOrchestrator:
             "siling_shishen": (analysis.get("month_siling") or {}).get("shishen", "？"),
             "siling_is_tougan": "是" if (analysis.get("tougan_check") or {}).get("tougan_analysis", {}).get((analysis.get("month_siling") or {}).get("stem"), {}).get("is_tougan") else "否",
             "potential_pattern": (analysis.get("tougan_check") or {}).get("pattern_hint", "普通格局"),
-            "siling_note": f"司令神 { (analysis.get('month_siling') or {}).get('stem', '？') } 为日主之 { (analysis.get('month_siling') or {}).get('shishen', '？') }",
+            "siling_note": f"司令神 { (analysis.get('month_siling') or {}).get('stem', '？') } 为日主之 { (analysis.get('month_siling') or {}).get('shishen', '？') }分析情况：{(analysis.get('month_siling') or {}).get('period', '？')}气司权。",
+            "original_time": basic.get("original_time", "未知"),
+            "geo_offset": basic.get("geo_offset", 0),
+            "equation_of_time": basic.get("equation_of_time", 0),
+            "is_dst": "是" if basic.get("is_dst") else "否",
+            "location_display": basic.get("location", "未知")
         }
 
         # 2. 推理结论 (History)
@@ -134,6 +139,16 @@ class ReasoningOrchestrator:
             "dayun_conclusion": history.get("dayun_conclusion", "分析中..."),
             "liunian_report": history.get("liunian_report", "预测中..."),
             "liunian_conclusion": history.get("liunian_conclusion", "分析中..."),
+            "dling_analysis": history.get("deling_analysis", "待评估"),
+            "dedi_analysis": history.get("dedi_analysis", "待评估"),
+            "deshi_analysis": history.get("deshi_analysis", "待评估"),
+            "primary_god_element": (history.get("primary_god") or {}).get("element", "待定") if isinstance(history.get("primary_god"), dict) else str(history.get("primary_god") or "待定"),
+            "primary_god_shishen": (history.get("primary_god") or {}).get("shishen", "待定") if isinstance(history.get("primary_god"), dict) else "待定",
+            "primary_god_functions": history.get("primary_god_functions", "待定"),
+            "secondary_god_element": (history.get("secondary_god") or {}).get("element", "待定") if isinstance(history.get("secondary_god"), dict) else str(history.get("secondary_god") or "待定"),
+            "secondary_god_shishen": (history.get("secondary_god") or {}).get("shishen", "待定") if isinstance(history.get("secondary_god"), dict) else "待定",
+            "secondary_god_functions": history.get("secondary_god_functions", "待定"),
+            "taboo_gods_list": "、".join([ (x.get("element") + "(" + x.get("shishen") + ")") if isinstance(x, dict) else str(x) for x in history.get("taboo_gods", [])]) or "无",
         })
 
         # 3. 算法子集分析
@@ -158,15 +173,40 @@ class ReasoningOrchestrator:
             "missing_elements": "、".join((analysis.get("special_flags") or {}).get("wuxing_missing", [])) or "无",
             "element_extreme": (analysis.get("special_flags") or {}).get("wuxing_extreme") or "正常",
             "structural_hint": (analysis.get("special_flags") or {}).get("hint") or "格局稳健",
-            # Special Flow Detection Support
-            "suspected_flow_god": analysis.get("special_flow", {}).get("is_special") and analysis.get("special_flow", {}).get("type") or "未知",
-            "flow_god_percentage": analysis.get("special_flow", {}).get("energy_ratio") or "0%",
-            "flow_god_is_siling": "是" if analysis.get("special_flow", {}).get("is_siling") else "否",
-            "flow_god_is_tougan": "是" if analysis.get("special_flow", {}).get("is_tougan") else "否",
-            "yin_strength": analysis.get("wuxing_count", {}).get(yin_bi["yin"], {}).get("ratio", "0%"),
-            "bi_strength": analysis.get("wuxing_count", {}).get(yin_bi["bi"], {}).get("ratio", "0%"),
-            "guan_strength": analysis.get("wuxing_count", {}).get("火", {}).get("ratio", "0%"), # 这里的官杀需要根据日主定，暂给默认
-            "root_analysis_summary": (analysis.get("root_analysis") or {}).get("has_root") and "日主有根气支持" or "日主孤立无援",
+            "year_ganzhi": (pillars.get("year") or {}).get("ganzhi", "？"),
+            "year_nayin": (pillars.get("year") or {}).get("nayin", "？"),
+            "year_gan": (pillars.get("year") or {}).get("gan", "？"),
+            "year_gan_shishen": (pillars.get("year") or {}).get("gan_shishen", "？"),
+            "year_canggan": "、".join((pillars.get("year") or {}).get("hidden_stems", [])),
+            "month_ganzhi": (pillars.get("month") or {}).get("ganzhi", "？"),
+            "month_nayin": (pillars.get("month") or {}).get("nayin", "？"),
+            "month_gan": (pillars.get("month") or {}).get("gan", "？"),
+            "month_gan_shishen": (pillars.get("month") or {}).get("gan_shishen", "？"),
+            "month_canggan": "、".join((pillars.get("month") or {}).get("hidden_stems", [])),
+            "day_ganzhi": (pillars.get("day") or {}).get("ganzhi", "？"),
+            "day_nayin": (pillars.get("day") or {}).get("nayin", "？"),
+            "day_gan": (pillars.get("day") or {}).get("gan", "？"),
+            "day_canggan": "、".join((pillars.get("day") or {}).get("hidden_stems", [])),
+            "time_ganzhi": (pillars.get("time") or {}).get("ganzhi", "？"),
+            "time_nayin": (pillars.get("time") or {}).get("nayin", "？"),
+            "time_gan": (pillars.get("time") or {}).get("gan", "？"),
+            "time_gan_shishen": (pillars.get("time") or {}).get("gan_shishen", "？"),
+            "time_canggan": "、".join((pillars.get("time") or {}).get("hidden_stems", [])),
+        })
+        
+        # 3.5 注入开运指导 (Luck Elements)
+        primary_god_elem = vm.get("primary_god_element")
+        from bazi_reference import BaziReference
+        luck_map = BaziReference.LUCK_ELEMENTS_MAP.get(primary_god_elem, {})
+        vm.update({
+            "favorable_directions": luck_map.get("directions", "平衡各方"),
+            "favorable_colors": luck_map.get("colors", "平衡选色"),
+            "favorable_numbers": luck_map.get("numbers", "平衡选取"),
+            "favorable_careers": luck_map.get("careers", "根据用神属性选择"),
+            "favorable_environment": luck_map.get("environment", "根据用神属性选择"),
+            "unfavorable_directions": "反向方位",
+            "unfavorable_colors": "忌神颜色",
+            "unfavorable_careers": "忌神行业",
         })
 
         # 4. 时空动态

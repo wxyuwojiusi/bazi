@@ -119,9 +119,14 @@
 【输出格式】
 ```json
 {
-  "primary_god": {"element": "木/火/土/金/水", "functions": ["...", "..."]},
-  "secondary_god": {"element": "...", "functions": ["..."]},
-  "taboo_gods": ["...", "..."],
-  "yongshen_conclusion": "基于格局、旺衰、调候综合选取的详细用神选取理由..."
+  "primary_god": { "element": "木", "shishen": "正印" },
+  "primary_god_functions": "生助日主，化解官杀之克...",
+  "secondary_god": { "element": "水", "shishen": "劫财" },
+  "secondary_god_functions": "滋养木气，增强帮身力度...",
+  "taboo_gods": [
+    { "element": "金", "shishen": "正官" },
+    { "element": "土", "shishen": "正财" }
+  ],
+  "yongshen_conclusion": "综合扶抑、调候情况，确定以木为第一用神，辅以水..."
 }
 ```

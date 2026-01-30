@@ -103,15 +103,16 @@ def main():
                 elif step_id == "strength":
                     context["strength_level"] = result_data.get("strength_level") or "状态未知"
                     context["strength_conclusion"] = result_data.get("strength_conclusion") or result_data.get("reasoning") or result_data.get("overall_strength") or "旺衰分析通过"
-                elif step_id == "special_flow":
-                    context["special_flow_conclusion"] = result_data.get("special_flow_conclusion") or result_data.get("reasoning") or "自化格局分析通过"
+                    context["deling_analysis"] = result_data.get("deling_analysis") or "得令分析缺失"
+                    context["dedi_analysis"] = result_data.get("dedi_analysis") or "得地分析缺失"
+                    context["deshi_analysis"] = result_data.get("deshi_analysis") or "得势分析缺失"
                 elif step_id == "yongshen":
                     context["yongshen_conclusion"] = result_data.get("yongshen_conclusion") or result_data.get("yongshen_advice") or "用神分析通过"
-                    # 辅助：更新用神概览用于报告
-                    pg = result_data.get("primary_god", {})
-                    if pg:
-                        elem = pg.get("element") if isinstance(pg, dict) else str(pg)
-                        context["primary_god_summary"] = f"用神：{elem}"
+                    context["primary_god"] = result_data.get("primary_god", {})
+                    context["primary_god_functions"] = result_data.get("primary_god_functions") or "用神作用缺失"
+                    context["secondary_god"] = result_data.get("secondary_god", {})
+                    context["secondary_god_functions"] = result_data.get("secondary_god_functions") or "喜神作用缺失"
+                    context["taboo_gods"] = result_data.get("taboo_gods", [])
                 elif step_id == "dayun":
                     context["dayun_conclusion"] = result_data.get("dayun_conclusion") or result_data.get("dayun_summary") or "大运评估通过"
                     context["dayun_report"] = result_data.get("dayun_summary") or context["dayun_conclusion"][:50]
